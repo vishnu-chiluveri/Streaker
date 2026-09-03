@@ -22,6 +22,15 @@ CREATE TABLE public.profiles (
   coin_balance integer NOT NULL DEFAULT 1000,
   push_token text,
   avatar_url text,
+  -- Per-user notification opt-outs, checked by the notify-* Edge Functions
+  -- before they send anything - having a push token is not consent. Default
+  -- true so behaviour is unchanged for anyone who never opens Settings.
+  -- notify_reminders is the odd one out: it gates a LOCAL daily notification
+  -- scheduled on-device (utils/pushNotifications.ts) and is stored only so
+  -- the toggle survives a reinstall - no server reads it.
+  notify_reminders boolean NOT NULL DEFAULT true,
+  notify_friend_activity boolean NOT NULL DEFAULT true,
+  notify_invitations boolean NOT NULL DEFAULT true,
   created_at timestamp with time zone NOT NULL DEFAULT timezone('utc'::text, now()),
   CONSTRAINT profiles_pkey PRIMARY KEY (id),
   CONSTRAINT profiles_id_fkey FOREIGN KEY (id) REFERENCES auth.users(id)
@@ -177,6 +186,70 @@ BEGIN
 
   -- 3. Delete the streak (cascades to streak_members, activities, check_ins, invitations)
   DELETE FROM public.streaks WHERE id = p_streak_id;
+END;
+$$;
+
+-- Permanently deletes the CALLER's account: their rows across every table,
+-- their profile, and their auth.users row. Nothing about this is doable from
+-- the client, which is why "Delete Account" silently did nothing (#28):
+--   * there is deliberately no DELETE policy on `profiles` (see RLS below),
+--     so a client-side delete matches zero rows and reports success;
+--   * six FKs reference profiles(id) with no ON DELETE clause, so the profile
+--     row cannot go until the referencing rows are cleared in order;
+--   * deleting from auth.users needs service_role / the Admin API.
+-- SECURITY DEFINER covers all three, and auth.uid() is the security boundary -
+-- there is no user-id parameter, so a caller can only ever delete themselves.
+CREATE OR REPLACE FUNCTION public.delete_account()
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_uid UUID := auth.uid();
+BEGIN
+  IF v_uid IS NULL THEN
+    RAISE EXCEPTION 'Not authenticated.';
+  END IF;
+
+  -- 1. Refund buy-ins to the OTHER members of group streaks this user created,
+  --    as delete_streak does - step 2 destroys those streaks, and walking off
+  --    with everyone else's coins is not an acceptable way to leave.
+  --    Summed per member first, deliberately: UPDATE ... FROM a join that
+  --    matches one profile several times updates that row ONCE with a single
+  --    arbitrary buy_in, so a member of two of this user's group streaks
+  --    would silently be refunded for only one of them.
+  UPDATE public.profiles p
+  SET coin_balance = p.coin_balance + r.refund
+  FROM (
+    SELECT m.user_id, SUM(s.buy_in) AS refund
+    FROM public.streaks s
+    JOIN public.streak_members m ON m.streak_id = s.id
+    WHERE s.created_by = v_uid
+      AND s.is_group
+      AND s.buy_in > 0
+      AND m.user_id <> v_uid
+    GROUP BY m.user_id
+  ) r
+  WHERE p.id = r.user_id;
+
+  -- 2. Streaks this user created. ON DELETE CASCADE takes streak_members,
+  --    check_ins, activities, invitations and redistribution_log with them -
+  --    including other members' rows, which is the point: a group streak
+  --    cannot outlive the profile its created_by FK points at.
+  DELETE FROM public.streaks WHERE created_by = v_uid;
+
+  -- 3. This user's own rows in streaks they did NOT create. Every FK below
+  --    references profiles(id) with no ON DELETE clause, so each one would
+  --    otherwise block step 4 with a foreign key violation.
+  DELETE FROM public.invitations WHERE inviter_id = v_uid OR invitee_id = v_uid;
+  DELETE FROM public.activities WHERE user_id = v_uid;
+  DELETE FROM public.check_ins WHERE user_id = v_uid;
+  DELETE FROM public.streak_members WHERE user_id = v_uid;
+
+  -- 4. Profile before auth user: profiles_id_fkey points at auth.users(id)
+  --    and also has no ON DELETE clause, so the reverse order deadlocks on it.
+  DELETE FROM public.profiles WHERE id = v_uid;
+  DELETE FROM auth.users WHERE id = v_uid;
 END;
 $$;
 
@@ -406,6 +479,11 @@ ALTER TABLE public.redistribution_log ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Public profiles are viewable by everyone." ON public.profiles FOR SELECT USING (true);
 CREATE POLICY "Users can insert their own profile." ON public.profiles FOR INSERT WITH CHECK (auth.uid() = id);
 CREATE POLICY "Anyone can update profiles." ON public.profiles FOR UPDATE USING (true);
+-- No DELETE policy, deliberately: account deletion goes through
+-- public.delete_account() (SECURITY DEFINER), which also has to clear the
+-- referencing rows and the auth.users row that a plain client-side delete
+-- can't touch. Adding a DELETE policy here would just re-expose the
+-- half-working path that made #28 look like a no-op.
 
 -- streaks
 -- NOTE: the next two policies are functional duplicates (same effect, added

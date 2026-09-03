@@ -12,6 +12,13 @@ export interface User {
   coin_balance: number;
   is_public: boolean;
   push_token: string | null;
+  // Notification opt-outs. notify_friend_activity and notify_invitations are
+  // read server-side by the notify-* Edge Functions; notify_reminders gates
+  // the on-device daily reminder and is persisted only so the toggle survives
+  // a reinstall. All default to true in the DB.
+  notify_reminders: boolean;
+  notify_friend_activity: boolean;
+  notify_invitations: boolean;
   created_at: string;
   updated_at: string;
 }

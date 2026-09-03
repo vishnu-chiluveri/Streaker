@@ -53,8 +53,21 @@ Deno.serve(async (req) => {
     const [{ data: invitee }, { data: streak }, { data: inviter }] = await Promise.all([
       supabase.from('profiles').select('display_name').eq('id', record.invitee_id).single(),
       supabase.from('streaks').select('name, emoji').eq('id', record.streak_id).single(),
-      supabase.from('profiles').select('push_token').eq('id', record.inviter_id).single(),
+      supabase
+        .from('profiles')
+        .select('push_token, notify_invitations')
+        .eq('id', record.inviter_id)
+        .single(),
     ]);
+
+    // Gated on notify_invitations rather than notify_friend_activity: this
+    // is the tail of the invitation the inviter themselves sent, not a
+    // check-in by someone they follow (#33).
+    if (inviter?.notify_invitations === false) {
+      return new Response(JSON.stringify({ sent: 0, reason: 'inviter opted out of invitations' }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
 
     const token = inviter?.push_token;
     // ExponentPushToken[...] only - excludes the temporary "ERR:..."

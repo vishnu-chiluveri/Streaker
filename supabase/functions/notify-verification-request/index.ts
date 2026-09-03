@@ -53,22 +53,29 @@ Deno.serve(async (req) => {
       supabase.from('streaks').select('name, emoji').eq('id', record.streak_id).single(),
       supabase
         .from('streak_members')
-        .select('profiles(push_token)')
+        .select('profiles(push_token, notify_friend_activity)')
         .eq('streak_id', record.streak_id)
         .eq('status', 'active')
         .neq('user_id', record.user_id),
     ]);
 
     const tokens = (recipients || [])
+      // A member who turned "Friend Activity" off in Settings is dropped
+      // before their token is ever collected - the toggle did nothing at all
+      // before this check existed (#33). `!== false` so a null/missing
+      // column (older row, pre-migration) still notifies, matching the
+      // column's DEFAULT true.
+      .filter((r: any) => r.profiles?.notify_friend_activity !== false)
       .map((r: any) => r.profiles?.push_token)
       // ExponentPushToken[...] only - excludes the temporary "ERR:..."
       // diagnostic strings saved when registration fails client-side.
       .filter((t: string | null): t is string => Boolean(t) && t!.startsWith('ExponentPushToken'));
 
     if (tokens.length === 0) {
-      return new Response(JSON.stringify({ sent: 0, reason: 'no recipients with a push token' }), {
-        headers: { 'Content-Type': 'application/json' },
-      });
+      return new Response(
+        JSON.stringify({ sent: 0, reason: 'no recipients with a push token who want these' }),
+        { headers: { 'Content-Type': 'application/json' } }
+      );
     }
 
     const checkerInName = checkerIn?.display_name || 'Someone';

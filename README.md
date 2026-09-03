@@ -59,6 +59,17 @@ npm install
 
 This is enough to run the app and work on most screens/features. If you're working on push notifications or the missed-day coin redistribution, see [Additional Setup](#-additional-setup-notifications--redistribution) below - those need a few things `schema.sql` can't set up on its own.
 
+**Already have a project?** `schema.sql` is written for a fresh database - re-running it whole will fail on objects that already exist. Apply only what's new. For the Settings fixes (delete account, notification preferences), that's:
+
+```sql
+ALTER TABLE public.profiles
+  ADD COLUMN IF NOT EXISTS notify_reminders boolean NOT NULL DEFAULT true,
+  ADD COLUMN IF NOT EXISTS notify_friend_activity boolean NOT NULL DEFAULT true,
+  ADD COLUMN IF NOT EXISTS notify_invitations boolean NOT NULL DEFAULT true;
+```
+
+plus the `public.delete_account()` function from `schema.sql` (it's `CREATE OR REPLACE`, so it can be pasted as-is). Run this **before** redeploying the `notify-*` functions - they select the new columns and will error on a database that doesn't have them yet.
+
 ### 4. Configure Environment Variables
 
 Copy `.env.example` to `.env` in the root of the project and fill in your Supabase credentials from step 3 above:
@@ -111,8 +122,12 @@ npx supabase functions deploy redistribute-missed-days
 npx supabase functions deploy notify-verification-request
 npx supabase functions deploy notify-invitation
 npx supabase functions deploy notify-invitation-accepted
+npx supabase functions deploy redistribute-missed-days
+npx supabase functions deploy notify-verification-request
+npx supabase functions deploy notify-invitation
+npx supabase functions deploy notify-invitation-accepted
 npx supabase functions deploy remind-pending-checkins
-```
+
 
 ### Database Webhooks (for push notifications)
 

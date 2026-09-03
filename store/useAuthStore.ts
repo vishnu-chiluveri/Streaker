@@ -20,6 +20,7 @@ interface AuthState {
   login: (form: LoginForm) => Promise<void>;
   register: (form: RegisterForm) => Promise<void>;
   logout: () => void;
+  deleteAccount: () => Promise<void>;
   updateProfile: (updates: Partial<User>) => void;
   updateCoinBalance: (delta: number) => void;
   clearError: () => void;
@@ -232,6 +233,29 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({ isLoading: true });
     await supabase.auth.signOut();
     set({ user: null, isAuthenticated: false, error: null, isLoading: false });
+  },
+
+  // Irreversible. Everything that actually makes the account go away happens
+  // inside the delete_account() RPC - see supabase/schema.sql for why none of
+  // it can be done with client-side deletes (#28).
+  deleteAccount: async () => {
+    const { user } = get();
+    if (!user) return;
+
+    set({ isLoading: true, error: null });
+    try {
+      const { error } = await supabase.rpc('delete_account');
+      if (error) throw error;
+
+      // The auth.users row is gone, so the cached session's token no longer
+      // resolves to anything. Drop it locally too, otherwise the app stays
+      // "logged in" as a user that doesn't exist until the next cold start.
+      await supabase.auth.signOut();
+      set({ user: null, isAuthenticated: false, isLoading: false, error: null });
+    } catch (err: any) {
+      set({ error: err.message, isLoading: false });
+      throw err;
+    }
   },
 
   updateProfile: async (updates: Partial<User>) => {

@@ -47,8 +47,20 @@ Deno.serve(async (req) => {
     const [{ data: inviter }, { data: streak }, { data: invitee }] = await Promise.all([
       supabase.from('profiles').select('display_name').eq('id', record.inviter_id).single(),
       supabase.from('streaks').select('name, emoji').eq('id', record.streak_id).single(),
-      supabase.from('profiles').select('push_token').eq('id', record.invitee_id).single(),
+      supabase
+        .from('profiles')
+        .select('push_token, notify_invitations')
+        .eq('id', record.invitee_id)
+        .single(),
     ]);
+
+    // The Settings toggle only means something if it is checked here - the
+    // invitee's saved token is a delivery address, not consent (#33).
+    if (invitee?.notify_invitations === false) {
+      return new Response(JSON.stringify({ sent: 0, reason: 'invitee opted out of invitations' }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
 
     const token = invitee?.push_token;
     // ExponentPushToken[...] only - excludes the temporary "ERR:..."
