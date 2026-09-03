@@ -287,7 +287,12 @@ export const useStreakStore = create<StreakState>((set, get) => ({
     const streak = get().streaks.find((s) => s.id === streakId);
     if (!streak) return [];
     const userCheckIns = get().getUserCheckIns(streakId, userId);
-    return buildCalendarDays(streak.created_at || getToday(), streak.target_days, userCheckIns);
+    // start_date (plain YYYY-MM-DD, computed in loadStreaks) not created_at
+    // (a full ISO timestamp) - buildCalendarDays/parseDate expect a bare
+    // date string, and a timestamp's "T..." tail makes every date compute
+    // as "NaN-NaN-NaN", which string-sorts after any real date and so
+    // renders every day as 'upcoming' regardless of actual status.
+    return buildCalendarDays(streak.start_date || getToday(), streak.target_days, userCheckIns);
   },
 
   hasCheckedInToday: (streakId: string, userId: string) => {
