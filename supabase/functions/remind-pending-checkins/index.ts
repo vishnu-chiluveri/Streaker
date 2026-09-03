@@ -63,7 +63,7 @@ Deno.serve(async (_req) => {
 
     const { data: members, error: membersErr } = await supabase
       .from('streak_members')
-      .select('user_id, streak_id, profiles(push_token)')
+      .select('user_id, streak_id, profiles(push_token, notify_reminders)')
       .eq('status', 'active');
     if (membersErr) throw membersErr;
 
@@ -83,9 +83,14 @@ Deno.serve(async (_req) => {
     const doneSet = new Set((todayCheckIns || []).map((c: any) => `${c.user_id}:${c.streak_id}`));
 
     // Every user with >=1 active streak still missing today's check-in.
+    // notify_reminders was added for the on-device daily reminder
+    // (utils/pushNotifications.ts) and originally had no server reader - this
+    // is the one, since both are "remind me to check in" from the user's
+    // point of view and the toggle should cover both or neither.
     const pendingUserIds = new Set<string>();
     const tokenByUser = new Map<string, string>();
     for (const m of members as any[]) {
+      if (m.profiles?.notify_reminders === false) continue;
       const token = m.profiles?.push_token;
       if (token) tokenByUser.set(m.user_id, token);
       if (!doneSet.has(`${m.user_id}:${m.streak_id}`)) {

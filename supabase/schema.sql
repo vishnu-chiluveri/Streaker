@@ -25,9 +25,10 @@ CREATE TABLE public.profiles (
   -- Per-user notification opt-outs, checked by the notify-* Edge Functions
   -- before they send anything - having a push token is not consent. Default
   -- true so behaviour is unchanged for anyone who never opens Settings.
-  -- notify_reminders is the odd one out: it gates a LOCAL daily notification
-  -- scheduled on-device (utils/pushNotifications.ts) and is stored only so
-  -- the toggle survives a reinstall - no server reads it.
+  -- notify_reminders originally gated only a LOCAL daily notification
+  -- scheduled on-device (utils/pushNotifications.ts); remind-pending-checkins
+  -- (the 3x/day server cron, #43) reads it too now - both are "remind me to
+  -- check in" from the user's point of view, so the one toggle covers both.
   notify_reminders boolean NOT NULL DEFAULT true,
   notify_friend_activity boolean NOT NULL DEFAULT true,
   notify_invitations boolean NOT NULL DEFAULT true,
