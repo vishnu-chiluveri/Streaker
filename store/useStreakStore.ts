@@ -97,12 +97,32 @@ export const useStreakStore = create<StreakState>((set, get) => ({
           .select('*')
           .in('id', streakIds);
         if (sErr) throw sErr;
+
+        // Check for any approved extension activities to ensure target_days is fully reconciled
+        const { data: approvedExts } = await supabase
+          .from('activities')
+          .select('streak_id, data')
+          .in('streak_id', streakIds)
+          .eq('type', 'extension_request');
+
+        const approvedTargetDaysMap: Record<string, number> = {};
+        (approvedExts || []).forEach((act: any) => {
+          if (act.data?.status === 'approved' && act.data?.new_target_days) {
+            const currentMax = approvedTargetDaysMap[act.streak_id] || 0;
+            if (act.data.new_target_days > currentMax) {
+              approvedTargetDaysMap[act.streak_id] = act.data.new_target_days;
+            }
+          }
+        });
+
         streaksData = (sData || []).map((s: any) => {
           const startDate = s.created_at.split('T')[0];
           const currentDay = getCurrentDayNumber(startDate);
-          const isCompleted = s.target_days ? currentDay > s.target_days : false;
+          const effectiveTargetDays = Math.max(s.target_days || 0, approvedTargetDaysMap[s.id] || 0);
+          const isCompleted = effectiveTargetDays ? currentDay > effectiveTargetDays : false;
           return {
             ...s,
+            target_days: effectiveTargetDays,
             start_date: startDate,
             coin_buy_in: s.buy_in || 0,
             status: (s.status as StreakStatus) || (isCompleted ? 'completed' : 'active'),
@@ -513,6 +533,7 @@ export const useStreakStore = create<StreakState>((set, get) => ({
           throw actErr;
         }
 
+        await useAuthStore.getState().refreshUser();
         set({ isLoading: false });
         return { requiresApproval: true, cost, additionalDays };
       }

@@ -302,6 +302,7 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
       await Promise.all([
         get().loadActivities(),
         useStreakStore.getState().loadStreaks(),
+        useAuthStore.getState().refreshUser(),
       ]);
     } catch (err: any) {
       console.error('respondToExtension err:', err);
@@ -347,6 +348,7 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
       await Promise.all([
         get().loadActivities(),
         useStreakStore.getState().loadStreaks(),
+        useAuthStore.getState().refreshUser(),
       ]);
     } catch (err: any) {
       console.error('cancelExtension err:', err);

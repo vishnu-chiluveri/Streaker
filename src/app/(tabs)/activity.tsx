@@ -2,9 +2,9 @@
 // STREAKER — Activity / Notifications Screen
 // ============================================================
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, RefreshControl } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useFocusEffect } from 'expo-router';
 import {
   Card,
   Avatar,
@@ -36,10 +36,12 @@ export default function ActivityScreen() {
   const params = useLocalSearchParams<{ tab?: string }>();
   const [activeTab, setActiveTab] = useState<Tab>(params.tab === 'invites' ? 'invites' : 'all');
 
-  useEffect(() => {
-    loadActivities();
-    loadInvitations();
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      loadActivities();
+      loadInvitations();
+    }, [loadActivities, loadInvitations])
+  );
 
   const pendingInvites = invitations.filter((inv) => inv.status === 'pending');
   const pendingExtensions = activities.filter(

@@ -2,7 +2,7 @@
 // STREAKER — Streak Detail View
 // ============================================================
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -10,7 +10,7 @@ import {
   TouchableOpacity,
   Alert,
 } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { useStreakStore } from '../../../store/useStreakStore';
 import { useAuthStore } from '../../../store/useAuthStore';
 import { useActivityStore } from '../../../store/useActivityStore';
@@ -45,6 +45,7 @@ export default function StreakDetailScreen() {
     getTodayCheckInStatus,
     deleteStreak,
     extendStreak,
+    loadStreaks,
   } = useStreakStore();
   const currentUser = useAuthStore((s) => s.user);
   const userId = currentUser?.id || '';
@@ -55,9 +56,12 @@ export default function StreakDetailScreen() {
   const [isExtending, setIsExtending] = useState(false);
   const [isResponding, setIsResponding] = useState(false);
 
-  useEffect(() => {
-    loadActivities();
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      loadStreaks();
+      loadActivities();
+    }, [loadStreaks, loadActivities])
+  );
 
   const streak = getStreakById(id!);
   if (!streak) {
@@ -107,7 +111,7 @@ export default function StreakDetailScreen() {
     try {
       const res = await extendStreak(streak.id, extendDays);
       setShowExtendModal(false);
-      await loadActivities();
+      await Promise.all([loadActivities(), loadStreaks()]);
       if (res.requiresApproval) {
         Alert.alert(
           'Extension Proposal Sent! 📬',
@@ -130,6 +134,7 @@ export default function StreakDetailScreen() {
     setIsResponding(true);
     try {
       await respondToExtension(activityId, approve);
+      await Promise.all([loadActivities(), loadStreaks()]);
       if (approve) {
         Alert.alert(
           'Extension Approved! 🔥',
@@ -160,6 +165,7 @@ export default function StreakDetailScreen() {
           onPress: async () => {
             try {
               await cancelExtension(activityId);
+              await Promise.all([loadActivities(), loadStreaks()]);
               Alert.alert('Proposal Cancelled', 'Your reserved coins have been refunded to your balance.');
             } catch (err: any) {
               Alert.alert('Error', err.message);
