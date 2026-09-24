@@ -64,17 +64,24 @@ function usePushNotifications(isAuthenticated: boolean, isHydrated: boolean) {
 
     const handleTap = (data: Record<string, unknown> | undefined) => {
       if (!data) return;
-      if (data.type === 'invitation') {
+      if (data.type === 'invitation' || data.type === 'extension_request') {
         router.push({ pathname: '/(tabs)/activity', params: { tab: 'invites' } });
-      } else if (data.type === 'invitation_accepted') {
-        router.push(`/streak/${data.streakId}` as any);
+      } else if (
+        data.type === 'invitation_accepted' ||
+        data.type === 'extension_approved' ||
+        data.type === 'extension_declined'
+      ) {
+        if (data.streakId) {
+          router.push(`/streak/${data.streakId}` as any);
+        } else {
+          router.push('/(tabs)/activity');
+        }
       } else if (data.type === 'check_in_reminder') {
         router.push('/(tabs)/home' as any);
       } else if (data.type === 'reminder') {
         // The daily reminder (utils/pushNotifications.ts) is about the user's
         // own streaks, and carries no activityId - home is where they check in.
         router.push('/(tabs)/home');
-
       } else {
         router.push({ pathname: '/(tabs)/explore', params: { tab: 'feed', activityId: data.activityId as string } });
       }
