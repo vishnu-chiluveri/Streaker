@@ -6,6 +6,7 @@ import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import type {
   Streak,
+  StreakStatus,
   StreakMember,
   CheckIn,
   CreateStreakForm,
@@ -13,8 +14,8 @@ import type {
   HeatmapCheckIn,
   HeatmapStatus,
 } from '../types';
-import { getToday, addDays, buildCalendarDays } from '../utils/helpers';
-import { APP_CONFIG, calculateBuyIn, calculateDailyReward } from '../utils/constants';
+import { getToday, addDays, buildCalendarDays, getCurrentDayNumber } from '../utils/helpers';
+import { APP_CONFIG, calculateBuyIn, calculateDailyReward, COINS } from '../utils/constants';
 import { useAuthStore } from './useAuthStore';
 
 interface StreakState {
@@ -42,6 +43,10 @@ interface StreakState {
   getTodayCheckInStatus: (streakId: string, userId: string) => 'pending' | 'verified' | 'rejected' | null;
   createStreak: (form: CreateStreakForm) => Promise<Streak>;
   deleteStreak: (streakId: string) => Promise<void>;
+  extendStreak: (
+    streakId: string,
+    additionalDays: number
+  ) => Promise<{ requiresApproval: boolean; cost: number; additionalDays: number }>;
   checkIn: (streakId: string, proofImageUrl?: string, note?: string) => Promise<CheckIn>;
   clearError: () => void;
 }
@@ -92,11 +97,17 @@ export const useStreakStore = create<StreakState>((set, get) => ({
           .select('*')
           .in('id', streakIds);
         if (sErr) throw sErr;
-        streaksData = (sData || []).map((s: any) => ({
-          ...s,
-          start_date: s.created_at.split('T')[0],
-          coin_buy_in: s.buy_in || 0
-        }));
+        streaksData = (sData || []).map((s: any) => {
+          const startDate = s.created_at.split('T')[0];
+          const currentDay = getCurrentDayNumber(startDate);
+          const isCompleted = s.target_days ? currentDay > s.target_days : false;
+          return {
+            ...s,
+            start_date: startDate,
+            coin_buy_in: s.buy_in || 0,
+            status: (s.status as StreakStatus) || (isCompleted ? 'completed' : 'active'),
+          };
+        });
 
         // All members for those streaks (to show leaderboards/friends)
         const { data: mData, error: mErr } = await supabase
@@ -393,7 +404,8 @@ export const useStreakStore = create<StreakState>((set, get) => ({
       const newStreak = {
         ...streakData,
         start_date: streakData.created_at.split('T')[0],
-        coin_buy_in: streakData.buy_in || 0
+        coin_buy_in: streakData.buy_in || 0,
+        status: 'active' as StreakStatus,
       } as Streak;
       const newMember: StreakMember = {
         id: memberData.id,
@@ -438,6 +450,133 @@ export const useStreakStore = create<StreakState>((set, get) => ({
         isLoading: false
       }));
     } catch (err: any) {
+      set({ error: err.message, isLoading: false });
+      throw err;
+    }
+  },
+
+  extendStreak: async (streakId: string, additionalDays: number) => {
+    set({ isLoading: true, error: null });
+    try {
+      const user = useAuthStore.getState().user;
+      if (!user) throw new Error('Not authenticated');
+
+      const streak = get().streaks.find((s) => s.id === streakId);
+      if (!streak) throw new Error('Streak not found');
+
+      if (streak.created_by !== user.id) {
+        throw new Error('Only the creator can extend this streak');
+      }
+
+      if (additionalDays <= 0) {
+        throw new Error('Days to extend must be greater than zero');
+      }
+
+      const cost = streak.is_group ? calculateBuyIn(additionalDays) : 0;
+      if (user.coin_balance < cost) {
+        throw new Error(
+          `Not enough coins. You need ${cost} coins to extend by ${additionalDays} days (Current balance: ${user.coin_balance}).`
+        );
+      }
+
+      const newTargetDays = (streak.target_days || 0) + additionalDays;
+      const newBuyIn = (streak.coin_buy_in || 0) + cost;
+
+      const members = get().streakMembers.filter((m) => m.streak_id === streakId && m.is_active);
+      const isMultiMemberGroup = streak.is_group && members.length > 1;
+
+      if (isMultiMemberGroup) {
+        // Multi-member group streak: creator reserves their coins and posts an extension request
+        if (cost > 0) {
+          await useAuthStore.getState().updateCoinBalance(-cost);
+        }
+
+        const { error: actErr } = await supabase.from('activities').insert({
+          user_id: user.id,
+          streak_id: streakId,
+          type: 'extension_request',
+          data: {
+            status: 'pending',
+            completed: false,
+            additional_days: additionalDays,
+            new_target_days: newTargetDays,
+            cost: cost,
+            creator_id: user.id,
+            creator_name: user.display_name,
+          },
+        });
+
+        if (actErr) {
+          if (cost > 0) {
+            await useAuthStore.getState().updateCoinBalance(cost);
+          }
+          throw actErr;
+        }
+
+        set({ isLoading: false });
+        return { requiresApproval: true, cost, additionalDays };
+      }
+
+      // Solo or single-member streak: extend immediately
+      const { error: rpcErr } = await supabase.rpc('extend_streak', {
+        p_streak_id: streakId,
+        p_additional_days: additionalDays,
+      });
+
+      if (rpcErr) {
+        const { error: updateErr } = await supabase
+          .from('streaks')
+          .update({
+            target_days: newTargetDays,
+            buy_in: newBuyIn,
+          })
+          .eq('id', streakId);
+
+        if (updateErr) throw updateErr;
+
+        if (cost > 0) {
+          await useAuthStore.getState().updateCoinBalance(-cost);
+        }
+
+        await supabase.from('activities').insert({
+          user_id: user.id,
+          streak_id: streakId,
+          type: 'milestone',
+          data: {
+            action: 'extended',
+            additional_days: additionalDays,
+            new_target_days: newTargetDays,
+            coins_invested: cost,
+          },
+        });
+      } else {
+        if (cost > 0) {
+          useAuthStore.setState((state) => ({
+            user: state.user
+              ? { ...state.user, coin_balance: Math.max(0, state.user.coin_balance - cost) }
+              : null,
+          }));
+        }
+      }
+
+      // Update local streak state
+      set((state) => ({
+        streaks: state.streaks.map((s) =>
+          s.id === streakId
+            ? {
+                ...s,
+                target_days: newTargetDays,
+                coin_buy_in: newBuyIn,
+                status: 'active',
+              }
+            : s
+        ),
+        isLoading: false,
+      }));
+
+      return { requiresApproval: false, cost, additionalDays };
+    } catch (err: any) {
+      console.error('extendStreak error', err);
       set({ error: err.message, isLoading: false });
       throw err;
     }

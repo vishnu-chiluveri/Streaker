@@ -22,6 +22,7 @@ export function StreakCard({ streak }: StreakCardProps) {
   const currentUser = useAuthStore((s) => s.user);
   const userId = currentUser?.id || '';
   const currentDay = getCurrentDayNumber(streak.start_date);
+  const isCompleted = streak.status === 'completed' || (streak.target_days ? currentDay > streak.target_days : false);
   const progress = getStreakProgress(streak.start_date, streak.target_days);
   const checkInStatus = getTodayCheckInStatus(streak.id, userId);
   const members = streak.members || [];
@@ -43,7 +44,7 @@ export function StreakCard({ streak }: StreakCardProps) {
               {streak.name}
             </Text>
             <Text className="text-gray-400 text-xs mt-0.5">
-              Day {currentDay} of {streak.target_days}
+              {isCompleted ? `Target reached (${streak.target_days}d) 🏆` : `Day ${currentDay} of ${streak.target_days}`}
             </Text>
           </View>
         </View>
@@ -53,6 +54,8 @@ export function StreakCard({ streak }: StreakCardProps) {
           <Badge label="Done ✅" variant="success" />
         ) : checkInStatus === 'pending' ? (
           <Badge label="Pending ⏳" variant="warning" />
+        ) : isCompleted ? (
+          <Badge label="Completed 🏆" variant="info" />
         ) : (
           <TouchableOpacity
             className="bg-orange-500 px-4 py-2 rounded-xl"

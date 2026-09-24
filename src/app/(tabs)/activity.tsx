@@ -16,13 +16,23 @@ import {
   Divider,
 } from '../../../components/ui';
 import { useActivityStore } from '../../../store/useActivityStore';
+import { useAuthStore } from '../../../store/useAuthStore';
 import { getRelativeTime } from '../../../utils/helpers';
 
 type Tab = 'all' | 'invites';
 
 export default function ActivityScreen() {
-  const { activities, invitations, loadActivities, loadInvitations, isLoading, acceptInvitation, declineInvitation } =
-    useActivityStore();
+  const {
+    activities,
+    invitations,
+    loadActivities,
+    loadInvitations,
+    isLoading,
+    acceptInvitation,
+    declineInvitation,
+    respondToExtension,
+  } = useActivityStore();
+  const currentUser = useAuthStore((s) => s.user);
   const params = useLocalSearchParams<{ tab?: string }>();
   const [activeTab, setActiveTab] = useState<Tab>(params.tab === 'invites' ? 'invites' : 'all');
 
@@ -32,6 +42,14 @@ export default function ActivityScreen() {
   }, []);
 
   const pendingInvites = invitations.filter((inv) => inv.status === 'pending');
+  const pendingExtensions = activities.filter(
+    (a) =>
+      a.type === 'extension_request' &&
+      !(a.data as any)?.completed &&
+      (a.data as any)?.status === 'pending' &&
+      (a.data as any)?.creator_id !== currentUser?.id
+  );
+  const totalActionCount = pendingInvites.length + pendingExtensions.length;
 
   return (
     <View className="flex-1 bg-[#0F0F1A]">
@@ -60,9 +78,9 @@ export default function ActivityScreen() {
             <Text className={`text-sm font-semibold ${activeTab === 'invites' ? 'text-white' : 'text-gray-400'}`}>
               ✉️ Invites
             </Text>
-            {pendingInvites.length > 0 && (
+            {totalActionCount > 0 && (
               <View className="bg-red-500 rounded-full w-5 h-5 items-center justify-center">
-                <Text className="text-white text-[10px] font-bold">{pendingInvites.length}</Text>
+                <Text className="text-white text-[10px] font-bold">{totalActionCount}</Text>
               </View>
             )}
           </TouchableOpacity>
@@ -90,7 +108,13 @@ export default function ActivityScreen() {
                   switch (act.type) {
                     case 'check_in': return '✅';
                     case 'missed': return '❌';
-                    case 'milestone': return '🏅';
+                    case 'milestone': {
+                      const action = (act.data as any)?.action;
+                      if (action === 'extension_declined') return '↩️';
+                      if (action === 'extension_approved') return '⚡';
+                      return '🏅';
+                    }
+                    case 'extension_request': return '⚡';
                     case 'streak_created': return '🆕';
                     case 'verification_request': return '🔍';
                     case 'joined':
@@ -104,16 +128,22 @@ export default function ActivityScreen() {
                   switch (act.type) {
                     case 'check_in': return `checked in to ${streak?.name || 'a streak'}`;
                     case 'verification_request': {
-                      // Resolved requests stay in the feed, so the wording has to
-                      // follow data.result rather than always reading as pending.
                       const on = streak?.name || 'a streak';
                       const result = (act.data as any)?.result;
                       if (result === 'approved') return `had a check-in approved on ${on}`;
                       if (result === 'rejected') return `had a check-in rejected on ${on}`;
                       return `needs a check-in verified on ${on}`;
                     }
+                    case 'extension_request': {
+                      const on = streak?.name || 'a streak';
+                      const result = (act.data as any)?.result;
+                      const days = (act.data as any)?.additional_days;
+                      if (result === 'approved') return `had extension approved for +${days} days on ${on}`;
+                      if (result === 'declined') return `had extension declined on ${on}`;
+                      return `requested to extend ${on} by +${days} days`;
+                    }
                     case 'missed': return `missed ${streak?.name || 'a streak'}`;
-                    case 'milestone': return `reached ${(act.data as any)?.milestone}-day milestone!`;
+                    case 'milestone': return (act.data as any)?.message || `reached ${(act.data as any)?.milestone}-day milestone!`;
                     case 'streak_created': return `created "${(act.data as any)?.streak_name}"`;
                     case 'joined':
                     case 'streak_joined': return `joined ${streak?.name || 'a streak'}`;
@@ -149,16 +179,64 @@ export default function ActivityScreen() {
 
         {activeTab === 'invites' && (
           <View className="px-5">
-            {pendingInvites.length === 0 ? (
-              <EmptyState emoji="✉️" title="No Pending Invites" description="When someone invites you to a streak, it'll appear here." />
+            {pendingInvites.length === 0 && pendingExtensions.length === 0 ? (
+              <EmptyState emoji="✉️" title="No Pending Invites" description="When someone invites you to a streak or proposes an extension, it'll appear here." />
             ) : (
-              pendingInvites.map((inv) => {
-                const inviter = (inv as any).inviter;
-                const streak = (inv as any).streak;
-                const creator = streak?.creator;
-                // Any member can send an invite, so the sender is not necessarily
-                // the owner - name whichever one applies instead of leaving it vague.
-                const inviterIsCreator = Boolean(creator && inviter && creator.id === inviter.id);
+              <>
+                {/* Pending Extension Requests */}
+                {pendingExtensions.map((ext) => {
+                  const cost = (ext.data as any)?.cost || 0;
+                  const days = (ext.data as any)?.additional_days || 0;
+                  const creatorName = (ext.data as any)?.creator_name || 'Group creator';
+                  const streak = (ext as any).streak;
+
+                  return (
+                    <Card key={ext.id} className="mb-3 bg-amber-500/10 border-amber-500/30">
+                      <View className="flex-row items-center mb-3">
+                        <Avatar name={creatorName} size="sm" className="mr-3" />
+                        <View className="flex-1">
+                          <Text className="text-white font-semibold">{creatorName}</Text>
+                          <Text className="text-gray-400 text-xs">
+                            proposed extending "{streak?.name || 'Streak'}"
+                          </Text>
+                        </View>
+                        <Badge label="Extension ⚡" variant="warning" size="sm" />
+                      </View>
+                      <View className="bg-[#252542] rounded-xl p-3 mb-3">
+                        <View className="flex-row justify-between items-center">
+                          <Text className="text-white font-medium text-sm">+{days} Additional Days</Text>
+                          <CoinDisplay amount={cost} size="sm" />
+                        </View>
+                        <Text className="text-gray-400 text-xs mt-1">
+                          Target will expand to {(ext.data as any)?.new_target_days} days. Stake {cost} 🪙 to join.
+                        </Text>
+                      </View>
+                      <View className="flex-row gap-3">
+                        <Button
+                          title="Decline"
+                          variant="outline"
+                          onPress={() => respondToExtension(ext.id, false)}
+                          className="flex-1"
+                          size="sm"
+                        />
+                        <Button
+                          title={`Approve & Stake ${cost} 🪙`}
+                          onPress={() => respondToExtension(ext.id, true)}
+                          className="flex-1"
+                          size="sm"
+                          disabled={(currentUser?.coin_balance || 0) < cost}
+                        />
+                      </View>
+                    </Card>
+                  );
+                })}
+
+                {/* Pending Streak Invites */}
+                {pendingInvites.map((inv) => {
+                  const inviter = (inv as any).inviter;
+                  const streak = (inv as any).streak;
+                  const creator = streak?.creator;
+                  const inviterIsCreator = Boolean(creator && inviter && creator.id === inviter.id);
                 return (
                   <Card key={inv.id} className="mb-3">
                     <View className="flex-row items-center mb-3">
@@ -193,9 +271,10 @@ export default function ActivityScreen() {
                     </View>
                   </Card>
                 );
-              })
-            )}
-          </View>
+              })}
+            </>
+          )}
+        </View>
         )}
       </ScrollView>
     </View>

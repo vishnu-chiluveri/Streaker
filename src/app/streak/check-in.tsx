@@ -18,6 +18,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
 import { useStreakStore } from '../../../store/useStreakStore';
 import { Button, Card } from '../../../components/ui';
+import { getCurrentDayNumber } from '../../../utils/helpers';
 
 export default function CheckInScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -29,6 +30,27 @@ export default function CheckInScreen() {
   const [showSuccess, setShowSuccess] = useState(false);
 
   const streak = getStreakById(id!);
+  const currentDay = streak ? getCurrentDayNumber(streak.start_date) : 0;
+  const isCompleted = streak?.status === 'completed' || (streak?.target_days ? currentDay > streak.target_days : false);
+
+  if (isCompleted) {
+    return (
+      <View className="flex-1 bg-[#0F0F1A] items-center justify-center px-8">
+        <Text className="text-6xl mb-4">🏆</Text>
+        <Text className="text-white text-2xl font-bold text-center">
+          Challenge Completed!
+        </Text>
+        <Text className="text-gray-400 text-sm mt-3 text-center mb-6">
+          This challenge has reached its {streak?.target_days}-day target. Extend the streak to continue checking in and earning rewards!
+        </Text>
+        <Button
+          title="Go to Streak & Extend ⚡"
+          onPress={() => router.replace(`/streak/${id}` as any)}
+          fullWidth
+        />
+      </View>
+    );
+  }
 
   const pickImage = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();

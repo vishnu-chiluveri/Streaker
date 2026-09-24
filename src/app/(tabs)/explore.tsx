@@ -267,13 +267,21 @@ function LeaderboardRow({ entry, currentUser }: { entry: LeaderboardEntry, curre
 
 // ---- Activity Feed ----
 function FeedTab({ activities, setActivities, highlightId }: { activities: any[], setActivities: React.Dispatch<React.SetStateAction<any[]>>, highlightId?: string }) {
-  const { verifyCheckIn, invitations, acceptInvitation, declineInvitation, loadInvitations } = useActivityStore();
+  const { verifyCheckIn, invitations, acceptInvitation, declineInvitation, loadInvitations, respondToExtension } = useActivityStore();
   const currentUser = useAuthStore(s => s.user);
   const [loadingId, setLoadingId] = useState<string | null>(null);
 
   useEffect(() => {
     loadInvitations();
   }, []);
+
+  const pendingExtensions = activities.filter(
+    (a) =>
+      a.type === 'extension_request' &&
+      !(a.data as any)?.completed &&
+      (a.data as any)?.status === 'pending' &&
+      (a.data as any)?.creator_id !== currentUser?.id
+  );
 
   const handleVerify = async (id: string, approve: boolean) => {
     setLoadingId(id);
@@ -295,6 +303,49 @@ function FeedTab({ activities, setActivities, highlightId }: { activities: any[]
 
   return (
     <View className="px-5">
+      {/* Extension Proposals Section */}
+      {pendingExtensions.length > 0 && (
+        <View className="mb-6">
+          <SectionHeader title="Extension Proposals ⚡" />
+          {pendingExtensions.map((ext) => {
+            const cost = (ext.data as any)?.cost || 0;
+            const days = (ext.data as any)?.additional_days || 0;
+            const creatorName = (ext.data as any)?.creator_name || 'Creator';
+            const streak = (ext as any).streak;
+
+            return (
+              <Card key={ext.id} className="mb-3 bg-amber-500/10 border-amber-500/30">
+                <View className="flex-row items-center justify-between mb-3">
+                  <View className="flex-row items-center flex-1">
+                    <Avatar name={creatorName} size="sm" className="mr-3" />
+                    <View className="flex-1">
+                      <Text className="text-white font-semibold">{creatorName} wants to extend</Text>
+                      <Text className="text-gray-400 text-xs mt-0.5">"{streak?.name}" by +{days} days ({cost} 🪙)</Text>
+                    </View>
+                  </View>
+                  <Text className="text-2xl">{streak?.emoji || '⚡'}</Text>
+                </View>
+                <View className="flex-row gap-2">
+                  <TouchableOpacity
+                    className="bg-[#252542] px-3 py-2 rounded-lg flex-1 items-center border border-gray-600"
+                    onPress={() => respondToExtension(ext.id, false)}
+                  >
+                    <Text className="text-gray-300 font-medium">Decline</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    className="bg-orange-500 px-3 py-2 rounded-lg flex-1 items-center"
+                    onPress={() => respondToExtension(ext.id, true)}
+                    disabled={(currentUser?.coin_balance || 0) < cost}
+                  >
+                    <Text className="text-white font-medium">Approve & Stake {cost} 🪙</Text>
+                  </TouchableOpacity>
+                </View>
+              </Card>
+            );
+          })}
+        </View>
+      )}
+
       {/* Invitations Section */}
       {invitations.length > 0 && (
         <View className="mb-6">

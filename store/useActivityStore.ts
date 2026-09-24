@@ -19,6 +19,8 @@ interface ActivityState {
   acceptInvitation: (invitationId: string) => Promise<void>;
   declineInvitation: (invitationId: string) => Promise<void>;
   verifyCheckIn: (activityId: string, approve: boolean) => Promise<void>;
+  respondToExtension: (activityId: string, approve: boolean) => Promise<void>;
+  cancelExtension: (activityId: string) => Promise<void>;
 }
 
 export const useActivityStore = create<ActivityState>((set, get) => ({
@@ -188,6 +190,166 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
       if (error) throw error;
     } catch (err) {
       console.error("verifyCheckIn err:", err);
+      throw err;
+    }
+  },
+
+  respondToExtension: async (activityId: string, approve: boolean) => {
+    try {
+      const user = useAuthStore.getState().user;
+      if (!user) throw new Error('Not authenticated');
+
+      const { error: rpcErr } = await supabase.rpc('respond_to_streak_extension', {
+        p_activity_id: activityId,
+        p_approve: approve,
+      });
+
+      if (rpcErr) {
+        // Fallback to client-side updates if RPC is not yet executed in Supabase instance
+        const { data: act, error: actErr } = await supabase
+          .from('activities')
+          .select('*, streak:streaks(*)')
+          .eq('id', activityId)
+          .single();
+        if (actErr || !act) throw actErr || new Error('Extension request not found');
+
+        const cost = (act.data as any)?.cost || 0;
+        const additionalDays = (act.data as any)?.additional_days || 0;
+        const creatorId = (act.data as any)?.creator_id;
+        const streakId = act.streak_id;
+
+        if (approve) {
+          if (user.coin_balance < cost) {
+            throw new Error(`You need ${cost} coins to approve this extension.`);
+          }
+          if (cost > 0) {
+            await useAuthStore.getState().updateCoinBalance(-cost);
+          }
+
+          const newTargetDays = (act.streak?.target_days || 0) + additionalDays;
+          const newBuyIn = (act.streak?.buy_in || 0) + cost;
+
+          await supabase
+            .from('streaks')
+            .update({ target_days: newTargetDays, buy_in: newBuyIn })
+            .eq('id', streakId);
+
+          await supabase
+            .from('activities')
+            .update({
+              data: {
+                ...(act.data as any),
+                status: 'approved',
+                completed: true,
+                result: 'approved',
+                responded_by: user.id,
+              },
+            })
+            .eq('id', activityId);
+
+          await supabase.from('activities').insert({
+            user_id: user.id,
+            streak_id: streakId,
+            type: 'milestone',
+            data: {
+              action: 'extension_approved',
+              message: `${user.display_name} approved the extension! Streak extended to ${newTargetDays} days.`,
+              new_target_days: newTargetDays,
+            },
+          });
+        } else {
+          // DECLINE: Refund creator's coins!
+          if (cost > 0 && creatorId) {
+            const { data: creatorProfile } = await supabase
+              .from('profiles')
+              .select('coin_balance')
+              .eq('id', creatorId)
+              .single();
+            if (creatorProfile) {
+              await supabase
+                .from('profiles')
+                .update({ coin_balance: creatorProfile.coin_balance + cost })
+                .eq('id', creatorId);
+            }
+          }
+
+          await supabase
+            .from('activities')
+            .update({
+              data: {
+                ...(act.data as any),
+                status: 'declined',
+                completed: true,
+                result: 'declined',
+                responded_by: user.id,
+              },
+            })
+            .eq('id', activityId);
+
+          await supabase.from('activities').insert({
+            user_id: creatorId,
+            streak_id: streakId,
+            type: 'milestone',
+            data: {
+              action: 'extension_declined',
+              message: `${user.display_name} didn't want to extend the streak. Your ${cost} 🪙 have been refunded, and the challenge will continue with the original target.`,
+              refunded_coins: cost,
+            },
+          });
+        }
+      }
+
+      await Promise.all([
+        get().loadActivities(),
+        useStreakStore.getState().loadStreaks(),
+      ]);
+    } catch (err: any) {
+      console.error('respondToExtension err:', err);
+      throw err;
+    }
+  },
+
+  cancelExtension: async (activityId: string) => {
+    try {
+      const user = useAuthStore.getState().user;
+      if (!user) throw new Error('Not authenticated');
+
+      const { error: rpcErr } = await supabase.rpc('cancel_streak_extension', {
+        p_activity_id: activityId,
+      });
+
+      if (rpcErr) {
+        // Fallback to client-side updates
+        const { data: act } = await supabase
+          .from('activities')
+          .select('*')
+          .eq('id', activityId)
+          .single();
+        if (act) {
+          const cost = (act.data as any)?.cost || 0;
+          if (cost > 0) {
+            await useAuthStore.getState().updateCoinBalance(cost);
+          }
+          await supabase
+            .from('activities')
+            .update({
+              data: {
+                ...(act.data as any),
+                status: 'cancelled',
+                completed: true,
+                result: 'cancelled',
+              },
+            })
+            .eq('id', activityId);
+        }
+      }
+
+      await Promise.all([
+        get().loadActivities(),
+        useStreakStore.getState().loadStreaks(),
+      ]);
+    } catch (err: any) {
+      console.error('cancelExtension err:', err);
       throw err;
     }
   },
