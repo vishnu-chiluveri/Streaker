@@ -220,4 +220,4 @@ export const COLORS = {
 // ---- Firebase App Tester Public Invite Link ----
 export const FIREBASE_INVITE_LINK =
   process.env.EXPO_PUBLIC_FIREBASE_INVITE_LINK ||
-  'https://appdistribution.firebase.dev/i/sample';
+  'https://appdistribution.firebase.dev/i/4ed16c3307f52c06';
