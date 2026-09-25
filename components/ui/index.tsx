@@ -456,3 +456,5 @@ export function LoadingScreen() {
 export function Divider({ className = '' }: { className?: string }) {
   return <View className={`h-px bg-[#2A2A45] my-4 ${className}`} />;
 }
+
+export { WebInstallPrompt } from './WebInstallPrompt';

@@ -42,3 +42,11 @@ if (html.includes('rel="manifest"')) {
   fs.writeFileSync(indexPath, html);
   console.log('patch-web-html: injected PWA meta tags into dist/index.html');
 }
+
+// Copy .htaccess to dist/ for Apache SPA rewrite support on HostGator
+const htaccessSrc = path.join(__dirname, '..', 'public', '.htaccess');
+const htaccessDest = path.join(__dirname, '..', 'dist', '.htaccess');
+if (fs.existsSync(htaccessSrc)) {
+  fs.copyFileSync(htaccessSrc, htaccessDest);
+  console.log('patch-web-html: copied .htaccess into dist/');
+}

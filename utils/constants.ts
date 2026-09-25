@@ -216,3 +216,8 @@ export const COLORS = {
     dark: ['#0F0F1A', '#1A1A2E', '#252542'],
   },
 } as const;
+
+// ---- Firebase App Tester Public Invite Link ----
+export const FIREBASE_INVITE_LINK =
+  process.env.EXPO_PUBLIC_FIREBASE_INVITE_LINK ||
+  'https://appdistribution.firebase.dev/i/sample';

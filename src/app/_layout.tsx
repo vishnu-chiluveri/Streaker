@@ -15,6 +15,7 @@ import {
   scheduleDailyReminderAsync,
   cancelDailyReminderAsync,
 } from '../../utils/pushNotifications';
+import { WebInstallPrompt } from '../../components/ui';
 
 import '../global.css';
 
@@ -193,6 +194,7 @@ export default function RootLayout() {
   return (
     <>
       <StatusBar style="light" />
+      <WebInstallPrompt />
       <UpdateStatusBanner status={updateStatus} />
       <Stack
         screenOptions={{
